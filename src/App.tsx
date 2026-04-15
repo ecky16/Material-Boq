@@ -438,8 +438,8 @@ export default function App() {
             <div className="w-16 h-16 bg-accent-grad rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-accent/20">
               <TableIcon className="text-[#002244] w-8 h-8" />
             </div>
-            <h1 className="text-2xl font-light text-white tracking-widest uppercase">LOP <span className="font-bold">SYSTEM</span></h1>
-            <p className="text-white/50 text-xs mt-2 tracking-wider uppercase">Secure Access Control</p>
+            <h1 className="text-3xl font-light text-white tracking-[0.3em] uppercase">Ma<span className="font-bold">BoQ</span></h1>
+            <p className="text-white/50 text-[10px] mt-2 tracking-[0.4em] uppercase">Material BOQ System</p>
           </div>
           
           <form onSubmit={handleLogin} className="space-y-6">
@@ -475,9 +475,9 @@ export default function App() {
             <TableIcon className="text-accent w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-light tracking-widest uppercase">LOP <span className="font-bold">SYSTEM</span></h1>
-            <div className="text-[10px] text-white/50 tracking-wider uppercase flex items-center gap-2">
-              <Calendar size={10} /> {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+            <h1 className="text-xl font-light tracking-[0.2em] uppercase">Ma<span className="font-bold">BoQ</span></h1>
+            <div className="text-[9px] text-white/50 tracking-[0.2em] uppercase flex items-center gap-2">
+              Material BOQ // {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
             </div>
           </div>
         </div>
@@ -820,7 +820,7 @@ export default function App() {
       <footer className="max-w-7xl mx-auto px-6 py-12 border-t border-white/10 flex flex-col md:flex-row items-center justify-between gap-6 mt-12">
         <div className="flex items-center gap-3 opacity-30">
           <TableIcon size={14} />
-          <span className="text-[9px] font-bold uppercase tracking-[0.3em]">LOP Manager Pro // Frosted Edition</span>
+          <span className="text-[9px] font-bold uppercase tracking-[0.3em]">MaBoQ // Material BOQ</span>
         </div>
         <div className="text-[9px] font-bold uppercase tracking-[0.3em] opacity-30 italic">
           Precision Engineering // Data Integrity
