@@ -26,3 +26,9 @@ export interface AppUser {
   inputer_name: string;
   role: 'admin' | 'user';
 }
+
+export interface DesignatorPrice {
+  designator: string;
+  unit_price: number;
+  updated_at: string;
+}

@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './lib/supabase';
 import { cn } from './lib/utils';
-import { LOP, LOPItem, LOPWithItems, AppUser } from './types';
+import { LOP, LOPItem, LOPWithItems, AppUser, DesignatorPrice } from './types';
 import { 
   Plus, 
   Download, 
@@ -23,7 +23,9 @@ import {
   Key,
   ChevronDown,
   X,
-  AlertTriangle
+  AlertTriangle,
+  Coins,
+  DollarSign
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -132,9 +134,10 @@ export default function App() {
     const saved = localStorage.getItem('lop_user');
     return saved ? JSON.parse(saved) : null;
   });
-  const [view, setView] = useState<'dashboard' | 'input' | 'users'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'input' | 'users' | 'prices'>('dashboard');
   const [lops, setLops] = useState<LOPWithItems[]>([]);
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
+  const [prices, setPrices] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [filterMonth, setFilterMonth] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterInputer, setFilterInputer] = useState<string>('all');
@@ -166,9 +169,15 @@ export default function App() {
   const [newPassword, setNewPassword] = useState('');
   const [newInputerName, setNewInputerName] = useState('');
 
+  // Price Management State
+  const [pricePasteData, setPricePasteData] = useState('');
+  const [parsedPrices, setParsedPrices] = useState<{ designator: string, price: number }[]>([]);
+  const [isSavingPrices, setIsSavingPrices] = useState(false);
+
   useEffect(() => {
     if (currentUser) {
       fetchLops();
+      fetchPrices();
       if (currentUser.role === 'admin') {
         fetchUsers();
       }
@@ -205,6 +214,20 @@ export default function App() {
       setAllUsers(data || []);
     } catch (err) {
       console.error('Error fetching users:', err);
+    }
+  };
+
+  const fetchPrices = async () => {
+    try {
+      const { data, error } = await supabase.from('designator_prices').select('*');
+      if (error) throw error;
+      const priceMap: Record<string, number> = {};
+      (data as DesignatorPrice[]).forEach(p => {
+        priceMap[p.designator] = p.unit_price;
+      });
+      setPrices(priceMap);
+    } catch (err) {
+      console.error('Error fetching prices:', err);
     }
   };
 
@@ -297,6 +320,89 @@ export default function App() {
     }).filter(item => item !== null) as { designator: string, volume: number }[];
 
     setParsedItems(items);
+  };
+
+  const handlePricePaste = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setPricePasteData(text);
+    
+    const lines = text.split(/\r?\n/).filter(line => line.trim());
+    const items = lines.map(line => {
+      const parts = line.trim().split(/\t|\s{2,}/);
+      if (parts.length >= 2) {
+        const designator = parts[0].trim();
+        const price = parseFloat(parts[parts.length - 1].replace(/,/g, ''));
+        if (!isNaN(price)) {
+          return { designator, price };
+        }
+      }
+      return null;
+    }).filter(item => item !== null) as { designator: string, price: number }[];
+
+    setParsedPrices(items);
+  };
+
+  const savePrices = async () => {
+    if (parsedPrices.length === 0) return;
+    setIsSavingPrices(true);
+    try {
+      const { error } = await supabase
+        .from('designator_prices')
+        .upsert(parsedPrices.map(p => ({
+          designator: p.designator,
+          unit_price: p.price,
+          updated_at: new Date().toISOString()
+        })));
+
+      if (error) throw error;
+      alert('Prices updated successfully');
+      setPricePasteData('');
+      setParsedPrices([]);
+      fetchPrices();
+    } catch (err) {
+      console.error('Error saving prices:', err);
+      alert('Failed to save prices');
+    } finally {
+      setIsSavingPrices(false);
+    }
+  };
+
+  const deletePrice = async (designator: string) => {
+    setModalConfig({
+      isOpen: true,
+      title: 'Delete Price',
+      message: `Are you sure you want to delete the price for "${designator}"?`,
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase.from('designator_prices').delete().eq('designator', designator);
+          if (error) throw error;
+          fetchPrices();
+        } catch (err) {
+          console.error('Error deleting price:', err);
+        }
+      }
+    });
+  };
+
+  const deleteAllPrices = async () => {
+    setModalConfig({
+      isOpen: true,
+      title: 'Delete ALL Prices',
+      message: 'WARNING: This will permanently delete ALL unit prices from the database. This action cannot be undone.',
+      variant: 'danger',
+      onConfirm: async () => {
+        try {
+          const { error } = await supabase.from('designator_prices').delete().neq('designator', 'placeholder_to_allow_all_delete');
+          // Note: .neq with a dummy value is a common way to delete all rows in Supabase if not using RPC
+          // Alternatively, just .delete().match({}) if supported by policy
+          if (error) throw error;
+          fetchPrices();
+        } catch (err) {
+          console.error('Error deleting all prices:', err);
+        }
+      }
+    });
   };
 
   const saveLop = async () => {
@@ -396,17 +502,19 @@ export default function App() {
 
     const designators = Array.from(new Set(filteredLops.flatMap(lop => lop.items.map(i => i.designator)))).sort();
     const rows = designators.map(designator => {
-      const row: any = { designator, total: 0 };
+      const unitPrice = prices[designator] || 0;
+      const row: any = { designator, total: 0, unitPrice, totalPrice: 0 };
       filteredLops.forEach(lop => {
         const item = lop.items.find(i => i.designator === designator);
         const volume = item ? item.volume : 0;
         row[lop.id] = volume;
         row.total += volume;
       });
+      row.totalPrice = row.total * unitPrice;
       return row;
     });
     return { designators, lops: filteredLops, rows };
-  }, [lops, filterMonth, filterInputer, currentUser]);
+  }, [lops, filterMonth, filterInputer, currentUser, prices]);
 
   const inputerNames = useMemo(() => {
     return Array.from(new Set(lops.map(l => l.inputer_name))).sort();
@@ -414,10 +522,12 @@ export default function App() {
 
   const exportToExcel = () => {
     const { lops: currentLops, rows } = pivotData;
-    const headers = ['DESIGNATOR', 'TOTAL MATERIAL', ...currentLops.map(lop => `${lop.date}\n${lop.name}\n(${lop.inputer_name})`)];
+    const headers = ['DESIGNATOR', 'UNIT PRICE', 'TOTAL MATERIAL', 'TOTAL PRICE', ...currentLops.map(lop => `${lop.date}\n${lop.name}\n(${lop.inputer_name})`)];
     const excelRows = rows.map(row => [
       row.designator,
+      row.unitPrice,
       row.total,
+      row.totalPrice,
       ...currentLops.map(lop => row[lop.id] || 0)
     ]);
     const ws = XLSX.utils.aoa_to_sheet([headers, ...excelRows]);
@@ -525,15 +635,26 @@ export default function App() {
               Input Data
             </button>
             {currentUser.role === 'admin' && (
-              <button 
-                onClick={() => setView('users')}
-                className={cn(
-                  "px-6 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                  view === 'users' ? "bg-accent-grad text-[#002244] shadow-lg shadow-accent/20" : "text-white/50 hover:text-white hover:bg-white/5"
-                )}
-              >
-                Manage Users
-              </button>
+              <>
+                <button 
+                  onClick={() => setView('users')}
+                  className={cn(
+                    "px-6 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                    view === 'users' ? "bg-accent-grad text-[#002244] shadow-lg shadow-accent/20" : "text-white/50 hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  Manage Users
+                </button>
+                <button 
+                  onClick={() => setView('prices')}
+                  className={cn(
+                    "px-6 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                    view === 'prices' ? "bg-accent-grad text-[#002244] shadow-lg shadow-accent/20" : "text-white/50 hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  Manage Prices
+                </button>
+              </>
             )}
           </div>
 
@@ -576,7 +697,88 @@ export default function App() {
         </div>
 
         <AnimatePresence mode="wait">
-          {view === 'users' ? (
+          {view === 'prices' ? (
+            <motion.div
+              key="prices"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="grid lg:grid-cols-12 gap-8"
+            >
+              <div className="lg:col-span-5">
+                <div className="glass-card p-8 rounded-3xl border-white/10">
+                  <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-accent mb-8">Update Unit Prices</h2>
+                  <div className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold uppercase tracking-wider text-white/40">Excel Price Paste Area</label>
+                      <textarea 
+                        className="glass-input w-full h-64 px-3 py-2 rounded-xl focus:outline-none focus:border-accent/50 transition-all text-xs font-mono resize-none leading-relaxed"
+                        placeholder="Paste columns from Excel...&#10;ODP-12  1500000&#10;POLE-9M  2500000"
+                        value={pricePasteData}
+                        onChange={handlePricePaste}
+                      />
+                      <p className="text-[9px] text-white/30 uppercase tracking-widest mt-2">Format: [Designator] [Price]</p>
+                    </div>
+                    <Button 
+                      className="w-full" 
+                      size="lg" 
+                      onClick={savePrices}
+                      disabled={isSavingPrices || parsedPrices.length === 0}
+                    >
+                      {isSavingPrices ? <Loader2 className="animate-spin" size={16} /> : "Update Prices Database"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              <div className="lg:col-span-7">
+                <div className="glass-card p-8 rounded-3xl border-white/10 h-full flex flex-col">
+                  <div className="flex items-center justify-between mb-8">
+                    <div className="flex items-center gap-4">
+                      <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-accent">Current Price List</h2>
+                      <span className="glass-card px-3 py-1 rounded-full text-[10px] font-bold border-white/5">{Object.keys(prices).length} Items</span>
+                    </div>
+                    {Object.keys(prices).length > 0 && (
+                      <button 
+                        onClick={deleteAllPrices}
+                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest text-red-400 hover:bg-red-500/10 transition-all border border-red-500/20"
+                      >
+                        <Trash2 size={12} />
+                        Clear All
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex-1 overflow-auto rounded-xl border border-white/5 bg-white/5">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-white/5">
+                          <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">Designator</th>
+                          <th className="text-right p-4 font-bold uppercase tracking-widest text-white/40">Unit Price</th>
+                          <th className="w-16 p-4"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="font-mono">
+                        {Object.entries(prices).sort().map(([designator, price]) => (
+                          <tr key={designator} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                            <td className="p-4 text-white/80">{designator}</td>
+                            <td className="p-4 text-right text-accent">Rp {price.toLocaleString()}</td>
+                            <td className="p-4 text-right">
+                              <button 
+                                onClick={() => deletePrice(designator)}
+                                className="p-1 text-white/10 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                                title="Delete Price"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          ) : view === 'users' ? (
             <motion.div
               key="users"
               initial={{ opacity: 0, scale: 0.98 }}
@@ -740,7 +942,9 @@ export default function App() {
                       <thead>
                         <tr className="bg-white/10">
                           <th className="p-5 text-left border-r border-white/5 font-bold uppercase tracking-[0.2em] text-accent sticky left-0 bg-[#3a4b7a] backdrop-blur-md z-20 min-w-[200px]">Designator</th>
-                          <th className="p-5 text-right border-r border-white/5 font-bold uppercase tracking-[0.2em] text-accent sticky left-[200px] bg-[#3a4b7a] backdrop-blur-md z-20 min-w-[120px]">Total</th>
+                          <th className="p-5 text-right border-r border-white/5 font-bold uppercase tracking-[0.2em] text-accent sticky left-[200px] bg-[#3a4b7a] backdrop-blur-md z-20 min-w-[120px]">Unit Price</th>
+                          <th className="p-5 text-right border-r border-white/5 font-bold uppercase tracking-[0.2em] text-accent sticky left-[320px] bg-[#3a4b7a] backdrop-blur-md z-20 min-w-[120px]">Total Vol</th>
+                          <th className="p-5 text-right border-r border-white/5 font-bold uppercase tracking-[0.2em] text-accent sticky left-[440px] bg-[#3a4b7a] backdrop-blur-md z-20 min-w-[150px]">Total Price</th>
                           {pivotData.lops.map(lop => (
                             <th key={lop.id} className="p-5 text-center border-r border-white/5 min-w-[160px]">
                               <div className="text-[9px] text-white/40 font-bold uppercase tracking-widest mb-1">{new Date(lop.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</div>
@@ -763,7 +967,9 @@ export default function App() {
                             className="border-b border-white/5 hover:bg-white/10 transition-colors group"
                           >
                             <td className="p-5 font-bold border-r border-white/5 sticky left-0 bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors">{row.designator}</td>
-                            <td className="p-5 text-right font-mono font-bold border-r border-white/5 sticky left-[200px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-accent">{row.total.toLocaleString()}</td>
+                            <td className="p-5 text-right font-mono border-r border-white/5 sticky left-[200px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-white/50">Rp {row.unitPrice.toLocaleString()}</td>
+                            <td className="p-5 text-right font-mono font-bold border-r border-white/5 sticky left-[320px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-accent">{row.total.toLocaleString()}</td>
+                            <td className="p-5 text-right font-mono font-bold border-r border-white/5 sticky left-[440px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-accent">Rp {row.totalPrice.toLocaleString()}</td>
                             {pivotData.lops.map(lop => (
                               <td key={lop.id} className="p-5 text-center font-mono border-r border-white/5 text-white/60">
                                 {row[lop.id] ? (
@@ -798,12 +1004,12 @@ export default function App() {
               {pivotData.rows.length > 0 && (
                 <div className="grid md:grid-cols-3 gap-6">
                   <div className="glass-card p-6 rounded-2xl border-white/10">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">Total Designators</div>
-                    <div className="text-3xl font-light text-accent">{pivotData.designators.length} <span className="text-sm font-bold uppercase tracking-widest opacity-30">Types</span></div>
-                  </div>
-                  <div className="glass-card p-6 rounded-2xl border-white/10">
                     <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">Total Volume</div>
                     <div className="text-3xl font-light text-accent">{pivotData.rows.reduce((acc, r) => acc + r.total, 0).toLocaleString()} <span className="text-sm font-bold uppercase tracking-widest opacity-30">Units</span></div>
+                  </div>
+                  <div className="glass-card p-6 rounded-2xl border-white/10">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">Total Valuation</div>
+                    <div className="text-3xl font-light text-accent">Rp {pivotData.rows.reduce((acc, r) => acc + r.totalPrice, 0).toLocaleString()} <span className="text-sm font-bold uppercase tracking-widest opacity-30">IDR</span></div>
                   </div>
                   <div className="glass-card p-6 rounded-2xl border-white/10">
                     <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">LOP Entries</div>
