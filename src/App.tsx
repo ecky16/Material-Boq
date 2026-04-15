@@ -185,12 +185,20 @@ export default function App() {
   }, [currentUser]);
 
   const fetchLops = async () => {
+    if (!currentUser) return;
     setLoading(true);
     try {
-      const { data: lopsData, error: lopsError } = await supabase
+      let query = supabase
         .from('lops')
         .select(`*, lop_items(*)`)
         .order('date', { ascending: false });
+
+      // If not admin, only fetch their own data
+      if (currentUser.role !== 'admin') {
+        query = query.eq('username', currentUser.username);
+      }
+
+      const { data: lopsData, error: lopsError } = await query;
 
       if (lopsError) throw lopsError;
       
@@ -493,10 +501,12 @@ export default function App() {
   const pivotData = useMemo(() => {
     let filteredLops = lops.filter(lop => lop.date.startsWith(filterMonth));
     
-    if (filterInputer !== 'all') {
-      filteredLops = filteredLops.filter(lop => lop.inputer_name === filterInputer);
-    } else if (currentUser?.role !== 'admin') {
-      // Non-admins only see their own data by default
+    if (currentUser?.role === 'admin') {
+      if (filterInputer !== 'all') {
+        filteredLops = filteredLops.filter(lop => lop.inputer_name === filterInputer);
+      }
+    } else {
+      // Non-admins are already filtered at fetch level, but double check here
       filteredLops = filteredLops.filter(lop => lop.username === currentUser?.username);
     }
 
