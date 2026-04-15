@@ -1039,7 +1039,7 @@ export default function App() {
           <span className="text-[9px] font-bold uppercase tracking-[0.3em]">MaBoQ // Material BOQ</span>
         </div>
         <div className="text-[9px] font-bold uppercase tracking-[0.3em] opacity-30 italic">
-          Precision Engineering // Data Integrity
+          designed by : eQ
         </div>
       </footer>
 
