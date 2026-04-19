@@ -6,6 +6,8 @@ export interface LOP {
   created_at: string;
   username: string;
   inputer_name: string;
+  type: 'warehouse' | 'boq';
+  parent_id: string | null;
 }
 
 export interface LOPItem {

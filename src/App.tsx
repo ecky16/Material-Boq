@@ -25,10 +25,42 @@ import {
   X,
   AlertTriangle,
   Coins,
-  DollarSign
+  DollarSign,
+  BarChart3,
+  Search,
+  ArrowUpRight,
+  TrendingUp,
+  Package
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  Cell,
+  PieChart,
+  Pie,
+  LineChart,
+  Line,
+  AreaChart,
+  Area
+} from 'recharts';
+
+// --- Helpers ---
+
+const formatIDR = (amount: number) => {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount);
+};
 
 // --- Components ---
 
@@ -134,15 +166,19 @@ export default function App() {
     const saved = localStorage.getItem('lop_user');
     return saved ? JSON.parse(saved) : null;
   });
-  const [view, setView] = useState<'dashboard' | 'input' | 'users' | 'prices'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'input' | 'users' | 'prices' | 'analytics'>('dashboard');
+  const [dashboardMode, setDashboardMode] = useState<'boq' | 'comparison'>('boq');
   const [lops, setLops] = useState<LOPWithItems[]>([]);
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
   const [prices, setPrices] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [filterMonth, setFilterMonth] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
   const [filterInputer, setFilterInputer] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Input Form State
+  const [inputType, setInputType] = useState<'warehouse' | 'boq'>('warehouse');
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
   const [lopName, setLopName] = useState('');
   const [lopDate, setLopDate] = useState(new Date().toISOString().slice(0, 10));
   const [pasteData, setPasteData] = useState('');
@@ -415,6 +451,10 @@ export default function App() {
 
   const saveLop = async () => {
     if (!lopName || !lopDate || parsedItems.length === 0 || !currentUser) return;
+    if (inputType === 'boq' && !selectedWarehouseId) {
+      alert('Please select a Warehouse LOP to link with this BOQ');
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -424,7 +464,9 @@ export default function App() {
           name: lopName, 
           date: lopDate, 
           username: currentUser.username,
-          inputer_name: currentUser.inputer_name
+          inputer_name: currentUser.inputer_name,
+          type: inputType,
+          parent_id: inputType === 'boq' ? selectedWarehouseId : null
         }])
         .select()
         .single();
@@ -447,6 +489,7 @@ export default function App() {
       setLopDate(new Date().toISOString().slice(0, 10));
       setPasteData('');
       setParsedItems([]);
+      setSelectedWarehouseId('');
       setView('dashboard');
       fetchLops();
     } catch (err) {
@@ -510,7 +553,20 @@ export default function App() {
       filteredLops = filteredLops.filter(lop => lop.username === currentUser?.username);
     }
 
-    const designators = Array.from(new Set(filteredLops.flatMap(lop => lop.items.map(i => i.designator)))).sort();
+    // Filter by dashboard mode
+    if (dashboardMode === 'boq') {
+      filteredLops = filteredLops.filter(l => l.type === 'boq');
+    }
+
+    let designators = Array.from(new Set(filteredLops.flatMap(lop => lop.items.map(i => i.designator)))).sort() as string[];
+    
+    // Apply search filter
+    if (searchQuery) {
+      designators = designators.filter(d => 
+        (d as string).toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
     const rows = designators.map(designator => {
       const unitPrice = prices[designator] || 0;
       const row: any = { designator, total: 0, unitPrice, totalPrice: 0 };
@@ -524,7 +580,57 @@ export default function App() {
       return row;
     });
     return { designators, lops: filteredLops, rows };
-  }, [lops, filterMonth, filterInputer, currentUser, prices]);
+  }, [lops, filterMonth, filterInputer, currentUser, prices, searchQuery, dashboardMode]);
+
+  const comparisonData = useMemo(() => {
+    if (dashboardMode !== 'comparison') return null;
+
+    // Get all comparison pairs
+    const pairs: { warehouse: LOPWithItems, boq: LOPWithItems }[] = [];
+    
+    const warehouseLops = lops.filter(l => l.type === 'warehouse');
+    const boqLops = lops.filter(l => l.type === 'boq');
+
+    warehouseLops.forEach(w => {
+      const b = boqLops.find(b => b.parent_id === w.id);
+      if (b) {
+        pairs.push({ warehouse: w, boq: b });
+      }
+    });
+
+    const results = pairs.map(({ warehouse, boq }) => {
+      const allDesignators = Array.from(new Set([
+        ...warehouse.items.map(i => i.designator),
+        ...boq.items.map(i => i.designator)
+      ])).sort();
+
+      const items = allDesignators.map(d => {
+        const wItem = warehouse.items.find(i => i.designator === d);
+        const bItem = boq.items.find(i => i.designator === d);
+        const wVol = wItem?.volume || 0;
+        const bVol = bItem?.volume || 0;
+        const diff = bVol - wVol;
+        return { designator: d, warehouseVol: wVol, boqVol: bVol, diff };
+      });
+
+      return {
+        id: `${warehouse.id}-${boq.id}`,
+        name: warehouse.name,
+        date: warehouse.date,
+        inputer: warehouse.inputer_name,
+        items: items.filter(i => i.diff !== 0 || searchQuery === '' || i.designator.toLowerCase().includes(searchQuery.toLowerCase()))
+      };
+    }).filter(pair => pair.items.length > 0);
+
+    return results;
+  }, [lops, dashboardMode, searchQuery]);
+
+  const pendingWarehouseLops = useMemo(() => {
+    const warehouseLops = lops.filter(l => l.type === 'warehouse');
+    const boqLops = lops.filter(l => l.type === 'boq');
+    
+    return warehouseLops.filter(w => !boqLops.some(b => b.parent_id === w.id));
+  }, [lops]);
 
   const inputerNames = useMemo(() => {
     return Array.from(new Set(lops.map(l => l.inputer_name))).sort();
@@ -545,6 +651,46 @@ export default function App() {
     XLSX.utils.book_append_sheet(wb, ws, "LOP Report");
     XLSX.writeFile(wb, `LOP_Report_${filterMonth}_${filterInputer}.xlsx`);
   };
+
+  const getAnalyticsData = useMemo(() => {
+    const { rows, lops: filteredLops } = pivotData;
+    
+    // Top 5 Materials by Total Price
+    const topMaterials = [...rows]
+      .sort((a, b) => b.totalPrice - a.totalPrice)
+      .slice(0, 5)
+      .map(r => ({
+        name: r.designator,
+        value: r.totalPrice,
+        volume: r.total
+      }));
+
+    // Volume Distribution (Top 8)
+    const volumeDistribution = [...rows]
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10)
+      .map(r => ({
+        name: r.designator,
+        volume: r.total
+      }));
+
+    // Daily Trend in selected month
+    const dailyData: Record<string, { date: string, total: number, value: number }> = {};
+    filteredLops.forEach(lop => {
+      const day = lop.date;
+      if (!dailyData[day]) dailyData[day] = { date: day, total: 0, value: 0 };
+      
+      lop.items.forEach(item => {
+        const price = prices[item.designator] || 0;
+        dailyData[day].total += item.volume;
+        dailyData[day].value += item.volume * price;
+      });
+    });
+
+    const trend = Object.values(dailyData).sort((a, b) => a.date.localeCompare(b.date));
+
+    return { topMaterials, volumeDistribution, trend };
+  }, [pivotData, prices]);
 
   if (!currentUser) {
     return (
@@ -636,6 +782,15 @@ export default function App() {
               Dashboard
             </button>
             <button 
+              onClick={() => setView('analytics')}
+              className={cn(
+                "px-6 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                view === 'analytics' ? "bg-accent-grad text-[#002244] shadow-lg shadow-accent/20" : "text-white/50 hover:text-white hover:bg-white/5"
+              )}
+            >
+              Analytics
+            </button>
+            <button 
               onClick={() => setView('input')}
               className={cn(
                 "px-6 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
@@ -707,7 +862,180 @@ export default function App() {
         </div>
 
         <AnimatePresence mode="wait">
-          {view === 'prices' ? (
+          {view === 'analytics' ? (
+             <motion.div
+                key="analytics"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="space-y-8"
+              >
+                {/* Stats Summary - Upgraded Design */}
+                <div className="grid md:grid-cols-3 gap-6">
+                  <div className="glass-card p-6 rounded-2xl border-white/10 flex items-center gap-6">
+                    <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center text-accent">
+                      <TableIcon size={24} />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-1">Total Volume</div>
+                      <div className="text-2xl font-light text-accent">{pivotData.rows.reduce((acc, r) => acc + r.total, 0).toLocaleString()} <span className="text-[10px] opacity-30">Units</span></div>
+                    </div>
+                  </div>
+                  <div className="glass-card p-6 rounded-2xl border-white/10 flex items-center gap-6">
+                    <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center text-accent">
+                      <DollarSign size={24} />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-1">Total Valuation</div>
+                      <div className="text-2xl font-light text-accent">{formatIDR(pivotData.rows.reduce((acc, r) => acc + r.totalPrice, 0))}</div>
+                    </div>
+                  </div>
+                  <div className="glass-card p-6 rounded-2xl border-white/10 flex items-center gap-6">
+                    <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center text-accent">
+                      <BarChart3 size={24} />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-1">LOP Projects</div>
+                      <div className="text-2xl font-light text-accent">{pivotData.lops.length} <span className="text-[10px] opacity-30">Entries</span></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid lg:grid-cols-3 gap-6">
+                  {/* Valuation Highlight */}
+                  <div className="lg:col-span-2 glass-card p-8 rounded-3xl border-white/10 flex flex-col">
+                    <div className="flex items-center justify-between mb-8">
+                      <div>
+                        <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-accent">Monthly Valuation Trend</h3>
+                        <p className="text-[10px] text-white/30 uppercase mt-1 tracking-widest">Selected Period: {filterMonth}</p>
+                      </div>
+                      <div className="bg-accent/10 p-2 rounded-lg text-accent">
+                        <TrendingUp size={20} />
+                      </div>
+                    </div>
+                    <div className="h-[300px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={getAnalyticsData.trend}>
+                          <defs>
+                            <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#00f2fe" stopOpacity={0.3}/>
+                              <stop offset="95%" stopColor="#00f2fe" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                          <XAxis 
+                            dataKey="date" 
+                            stroke="rgba(255,255,255,0.3)" 
+                            fontSize={10} 
+                            tickFormatter={(val) => new Date(val).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          />
+                          <YAxis 
+                            stroke="rgba(255,255,255,0.3)" 
+                            fontSize={10} 
+                            tickFormatter={(val) => val >= 1000000 ? `Rp${(val / 1000000).toLocaleString()}M` : formatIDR(val)}
+                          />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: 'rgba(0,0,0,0.8)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                            itemStyle={{ color: '#00f2fe' }}
+                            labelStyle={{ color: 'rgba(255,255,255,0.5)', marginBottom: '4px' }}
+                          />
+                          <Area type="monotone" dataKey="value" stroke="#00f2fe" fillOpacity={1} fill="url(#colorValue)" strokeWidth={3} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Top Spending Materials */}
+                  <div className="glass-card p-8 rounded-3xl border-white/10">
+                    <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-accent mb-8">Top Value Drivers</h3>
+                    <div className="space-y-6">
+                      {getAnalyticsData.topMaterials.map((item, idx) => (
+                        <div key={idx} className="space-y-2">
+                          <div className="flex justify-between items-end">
+                            <span className="text-[10px] font-bold text-white/60 truncate max-w-[150px]">{item.name}</span>
+                            <span className="text-[10px] font-mono text-accent">{item.value >= 1000000 ? `Rp ${(item.value / 1000000).toFixed(1)}M` : formatIDR(item.value)}</span>
+                          </div>
+                          <div className="h-1 bg-white/5 rounded-full overflow-hidden">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${(item.value / (getAnalyticsData.topMaterials[0]?.value || 1)) * 100}%` }}
+                              className="h-full bg-accent-grad shadow-[0_0_10px_rgba(0,242,254,0.3)]"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid lg:grid-cols-2 gap-6">
+                   {/* Volume Distribution Chart */}
+                   <div className="glass-card p-8 rounded-3xl border-white/10">
+                    <h3 className="text-sm font-bold uppercase tracking-[0.2em] text-accent mb-8">Volume Leaders (Top 10)</h3>
+                    <div className="h-[300px] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={getAnalyticsData.volumeDistribution} layout="vertical">
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
+                          <XAxis type="number" stroke="rgba(255,255,255,0.3)" fontSize={10} />
+                          <YAxis dataKey="name" type="category" stroke="rgba(255,255,255,0.3)" fontSize={10} width={100} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: 'rgba(0,0,0,0.8)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                            cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                          />
+                          <Bar dataKey="volume" fill="#4facfe" radius={[0, 4, 4, 0]}>
+                            {getAnalyticsData.volumeDistribution.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={`url(#gradientBar)`} />
+                            ))}
+                          </Bar>
+                          <defs>
+                            <linearGradient id="gradientBar" x1="0" y1="0" x2="1" y2="0">
+                              <stop offset="0%" stopColor="#00f2fe" />
+                              <stop offset="100%" stopColor="#4facfe" />
+                            </linearGradient>
+                          </defs>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Summary Stats Grid */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="glass-card p-6 rounded-3xl border-white/10 flex flex-col justify-center items-center text-center">
+                      <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mb-4">
+                        <Package size={24} />
+                      </div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Total Items</div>
+                      <div className="text-2xl font-light text-white">{pivotData.rows.length}</div>
+                    </div>
+                    <div className="glass-card p-6 rounded-3xl border-white/10 flex flex-col justify-center items-center text-center">
+                      <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mb-4">
+                        <Calendar size={24} />
+                      </div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Active Days</div>
+                      <div className="text-2xl font-light text-white">{getAnalyticsData.trend.length}</div>
+                    </div>
+                    <div className="glass-card p-6 rounded-3xl border-white/10 flex flex-col justify-center items-center text-center">
+                      <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mb-4">
+                        <Coins size={24} />
+                      </div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Avg Vol/Day</div>
+                      <div className="text-xl font-light text-white">{(pivotData.rows.reduce((acc, r) => acc + r.total, 0) / (getAnalyticsData.trend.length || 1)).toFixed(1)}</div>
+                    </div>
+                    <div className="glass-card p-6 rounded-3xl border-white/10 flex flex-col justify-center items-center text-center">
+                      <div className="w-12 h-12 bg-accent/10 rounded-2xl flex items-center justify-center text-accent mb-4">
+                        <ArrowUpRight size={24} />
+                      </div>
+                      <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-1">Highest Daily</div>
+                      <div className="text-xl font-light text-white">
+                        {Math.max(...getAnalyticsData.trend.map(t => t.value), 0) >= 1000000 
+                          ? `Rp ${(Math.max(...getAnalyticsData.trend.map(t => t.value), 0) / 1000000).toFixed(1)}M` 
+                          : formatIDR(Math.max(...getAnalyticsData.trend.map(t => t.value), 0))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+          ) : view === 'prices' ? (
             <motion.div
               key="prices"
               initial={{ opacity: 0, scale: 0.98 }}
@@ -770,7 +1098,7 @@ export default function App() {
                         {Object.entries(prices).sort().map(([designator, price]) => (
                           <tr key={designator} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
                             <td className="p-4 text-white/80">{designator}</td>
-                            <td className="p-4 text-right text-accent">Rp {price.toLocaleString()}</td>
+                            <td className="p-4 text-right text-accent">{formatIDR(price as number)}</td>
                             <td className="p-4 text-right">
                               <button 
                                 onClick={() => deletePrice(designator)}
@@ -858,23 +1186,76 @@ export default function App() {
                 <div className="glass-card p-8 rounded-3xl border-white/10">
                   <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-accent mb-8">Data Entry</h2>
                   
+                  <div className="mb-8 p-1.5 glass-card rounded-xl border-white/5 flex gap-2">
+                    <button 
+                      onClick={() => { setInputType('warehouse'); setLopName(''); setLopDate(new Date().toISOString().slice(0, 10)); }}
+                      className={cn(
+                        "flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                        inputType === 'warehouse' ? "bg-accent-grad text-[#002244]" : "text-white/40 hover:bg-white/5"
+                      )}
+                    >
+                      Warehouse
+                    </button>
+                    <button 
+                      onClick={() => setInputType('boq')}
+                      className={cn(
+                        "flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                        inputType === 'boq' ? "bg-accent-grad text-[#002244]" : "text-white/40 hover:bg-white/5"
+                      )}
+                    >
+                      BOQ
+                    </button>
+                  </div>
+
                   <div className="space-y-6">
-                    <div className="space-y-2">
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-white/40">Nama LOP</label>
-                      <Input 
-                        placeholder="e.g. Zone A Fiber Optic" 
-                        value={lopName}
-                        onChange={(e) => setLopName(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="block text-[10px] font-bold uppercase tracking-wider text-white/40">Tanggal Pekerjaan</label>
-                      <Input 
-                        type="date" 
-                        value={lopDate}
-                        onChange={(e) => setLopDate(e.target.value)}
-                      />
-                    </div>
+                    {inputType === 'boq' ? (
+                      <div className="space-y-2">
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-white/40">Select Warehouse LOP</label>
+                        <select 
+                          className="glass-input w-full px-3 py-2 rounded-lg focus:outline-none focus:border-accent/50 transition-all text-sm bg-transparent appearance-none"
+                          value={selectedWarehouseId}
+                          onChange={(e) => {
+                            const lop = pendingWarehouseLops.find(l => l.id === e.target.value);
+                            if (lop) {
+                              setSelectedWarehouseId(lop.id);
+                              setLopName(lop.name);
+                              setLopDate(lop.date);
+                            } else {
+                              setSelectedWarehouseId('');
+                              setLopName('');
+                            }
+                          }}
+                        >
+                          <option value="" className="bg-[#2b5876]">Choose Pending Warehouse LOP...</option>
+                          {pendingWarehouseLops.map(lop => (
+                            <option key={lop.id} value={lop.id} className="bg-[#2b5876]">{lop.name} ({new Date(lop.date).toLocaleDateString()})</option>
+                          ))}
+                        </select>
+                        {pendingWarehouseLops.length === 0 && (
+                          <p className="text-[9px] text-red-400 uppercase tracking-widest">No pending Warehouse projects available</p>
+                        )}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-2">
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-white/40">Nama LOP</label>
+                          <Input 
+                            placeholder="e.g. Zone A Fiber Optic" 
+                            value={lopName}
+                            onChange={(e) => setLopName(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="block text-[10px] font-bold uppercase tracking-wider text-white/40">Tanggal Pekerjaan</label>
+                          <Input 
+                            type="date" 
+                            value={lopDate}
+                            onChange={(e) => setLopDate(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    )}
+                    
                     <div className="space-y-2">
                       <label className="block text-[10px] font-bold uppercase tracking-wider text-white/40">Excel Paste Area</label>
                       <textarea 
@@ -891,9 +1272,9 @@ export default function App() {
                     className="w-full mt-8" 
                     size="lg" 
                     onClick={saveLop}
-                    disabled={isSaving || !lopName || parsedItems.length === 0}
+                    disabled={isSaving || !lopName || parsedItems.length === 0 || (inputType === 'boq' && !selectedWarehouseId)}
                   >
-                    {isSaving ? <Loader2 className="animate-spin" size={16} /> : "Simpan ke Database"}
+                    {isSaving ? <Loader2 className="animate-spin" size={16} /> : `Save ${inputType.toUpperCase()} Entry`}
                   </Button>
                 </div>
               </div>
@@ -941,9 +1322,113 @@ export default function App() {
               exit={{ opacity: 0, y: 20 }}
               className="space-y-8"
             >
+              {/* Dashboard Action Bar */}
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="relative w-full md:w-80">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+                    <Input 
+                      placeholder="Search designator..." 
+                      className="pl-10"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                    {searchQuery && (
+                      <button 
+                        onClick={() => setSearchQuery('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-white/30 hover:text-white"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="p-1 glass-card rounded-xl border-white/5 flex gap-1">
+                    <button 
+                      onClick={() => setDashboardMode('boq')}
+                      className={cn(
+                        "px-4 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest transition-all",
+                        dashboardMode === 'boq' ? "bg-accent-grad text-[#002244]" : "text-white/40 hover:bg-white/5"
+                      )}
+                    >
+                      BOQ View
+                    </button>
+                    <button 
+                      onClick={() => setDashboardMode('comparison')}
+                      className={cn(
+                        "px-4 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest transition-all",
+                        dashboardMode === 'comparison' ? "bg-accent-grad text-[#002244]" : "text-white/40 hover:bg-white/5"
+                      )}
+                    >
+                      Comparison View
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                   <div className="text-[10px] font-bold uppercase tracking-widest text-white/30 px-3">
+                    {dashboardMode === 'comparison' ? `${comparisonData?.length || 0} Pairs Compared` : `${pivotData.rows.length} Items Found`}
+                  </div>
+                </div>
+              </div>
+
               {loading ? (
                 <div className="h-96 flex items-center justify-center">
                   <Loader2 className="animate-spin text-accent" size={48} />
+                </div>
+              ) : dashboardMode === 'comparison' ? (
+                <div className="grid md:grid-cols-2 gap-8">
+                  {comparisonData?.map(pair => (
+                    <div key={pair.id} className="glass-card rounded-3xl border-white/10 overflow-hidden flex flex-col shadow-xl">
+                      <div className="p-6 bg-white/5 border-b border-white/5 flex items-center justify-between">
+                        <div>
+                          <h3 className="text-sm font-bold uppercase tracking-widest">{pair.name}</h3>
+                          <p className="text-[9px] text-white/30 uppercase mt-1 tracking-widest">{new Date(pair.date).toLocaleDateString()} // {pair.inputer}</p>
+                        </div>
+                        <div className="flex flex-col items-end">
+                          <span className="text-[10px] font-bold text-accent uppercase tracking-widest">Difference Report</span>
+                        </div>
+                      </div>
+                      <div className="overflow-auto max-h-[400px]">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-[#3a4b7a] z-10">
+                            <tr>
+                              <th className="p-4 text-left font-bold uppercase tracking-widest text-white/40">Designator</th>
+                              <th className="p-4 text-right font-bold uppercase tracking-widest text-white/40">WH</th>
+                              <th className="p-4 text-right font-bold uppercase tracking-widest text-white/40">BOQ</th>
+                              <th className="p-4 text-right font-bold uppercase tracking-widest text-white/40">Delta</th>
+                            </tr>
+                          </thead>
+                          <tbody className="font-mono">
+                            {pair.items.map((item, idx) => (
+                              <tr key={idx} className="border-b border-white/5 hover:bg-white/5 transition-colors">
+                                <td className="p-4 text-white/80">{item.designator}</td>
+                                <td className="p-4 text-right text-white/40">{item.warehouseVol.toLocaleString()}</td>
+                                <td className="p-4 text-right text-white/80">{item.boqVol.toLocaleString()}</td>
+                                <td className={cn(
+                                  "p-4 text-right font-bold",
+                                  item.diff > 0 ? "text-green-400" : item.diff < 0 ? "text-red-400" : "text-white/20"
+                                )}>
+                                  {item.diff > 0 ? `+${item.diff.toLocaleString()}` : item.diff.toLocaleString()}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="p-4 bg-white/5 border-t border-white/5 flex gap-4 text-[10px] font-bold uppercase tracking-widest">
+                        <div className="text-red-400">Total Under: {pair.items.filter(i => i.diff < 0).length}</div>
+                        <div className="text-green-400">Total Extra: {pair.items.filter(i => i.diff > 0).length}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {comparisonData?.length === 0 && (
+                    <div className="md:col-span-2 glass-card p-20 rounded-3xl border-white/10 text-center flex flex-col items-center">
+                       <AlertTriangle size={48} className="text-white/10 mb-6" />
+                       <h3 className="text-xl font-light tracking-widest uppercase mb-2">No Comparisons Available</h3>
+                       <p className="text-white/30 text-xs">Pair up Warehouse entries with BOQ entries to see differences here.</p>
+                    </div>
+                  )}
                 </div>
               ) : pivotData.rows.length > 0 ? (
                 <div className="glass-card rounded-3xl border-white/10 overflow-hidden shadow-2xl">
@@ -977,9 +1462,9 @@ export default function App() {
                             className="border-b border-white/5 hover:bg-white/10 transition-colors group"
                           >
                             <td className="p-5 font-bold border-r border-white/5 sticky left-0 bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors">{row.designator}</td>
-                            <td className="p-5 text-right font-mono border-r border-white/5 sticky left-[200px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-white/50">Rp {row.unitPrice.toLocaleString()}</td>
+                            <td className="p-5 text-right font-mono border-r border-white/5 sticky left-[200px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-white/50">{formatIDR(row.unitPrice)}</td>
                             <td className="p-5 text-right font-mono font-bold border-r border-white/5 sticky left-[320px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-accent">{row.total.toLocaleString()}</td>
-                            <td className="p-5 text-right font-mono font-bold border-r border-white/5 sticky left-[440px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-accent">Rp {row.totalPrice.toLocaleString()}</td>
+                            <td className="p-5 text-right font-mono font-bold border-r border-white/5 sticky left-[440px] bg-[#3a4b7a]/80 backdrop-blur-md z-10 group-hover:bg-[#3a4b7a] transition-colors text-accent">{formatIDR(row.totalPrice)}</td>
                             {pivotData.lops.map(lop => (
                               <td key={lop.id} className="p-5 text-center font-mono border-r border-white/5 text-white/60">
                                 {row[lop.id] ? (
@@ -1013,17 +1498,32 @@ export default function App() {
               {/* Stats Summary */}
               {pivotData.rows.length > 0 && (
                 <div className="grid md:grid-cols-3 gap-6">
-                  <div className="glass-card p-6 rounded-2xl border-white/10">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">Total Volume</div>
-                    <div className="text-3xl font-light text-accent">{pivotData.rows.reduce((acc, r) => acc + r.total, 0).toLocaleString()} <span className="text-sm font-bold uppercase tracking-widest opacity-30">Units</span></div>
+                  <div className="glass-card p-6 rounded-2xl border-white/10 flex items-center gap-6">
+                    <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center text-accent">
+                      <TableIcon size={24} />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-1">Total Volume</div>
+                      <div className="text-2xl font-light text-accent">{pivotData.rows.reduce((acc, r) => acc + r.total, 0).toLocaleString()} <span className="text-[10px] opacity-30">Units</span></div>
+                    </div>
                   </div>
-                  <div className="glass-card p-6 rounded-2xl border-white/10">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">Total Valuation</div>
-                    <div className="text-3xl font-light text-accent">Rp {pivotData.rows.reduce((acc, r) => acc + r.totalPrice, 0).toLocaleString()} <span className="text-sm font-bold uppercase tracking-widest opacity-30">IDR</span></div>
+                  <div className="glass-card p-6 rounded-2xl border-white/10 flex items-center gap-6">
+                    <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center text-accent">
+                      <DollarSign size={24} />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-1">Total Valuation</div>
+                      <div className="text-2xl font-light text-accent">{formatIDR(pivotData.rows.reduce((acc, r) => acc + r.totalPrice, 0))}</div>
+                    </div>
                   </div>
-                  <div className="glass-card p-6 rounded-2xl border-white/10">
-                    <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-2">LOP Entries</div>
-                    <div className="text-3xl font-light text-accent">{pivotData.lops.length} <span className="text-sm font-bold uppercase tracking-widest opacity-30">Projects</span></div>
+                  <div className="glass-card p-6 rounded-2xl border-white/10 flex items-center gap-6">
+                    <div className="w-14 h-14 bg-accent/10 rounded-2xl flex items-center justify-center text-accent">
+                      <BarChart3 size={24} />
+                    </div>
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/40 mb-1">LOP Projects</div>
+                      <div className="text-2xl font-light text-accent">{pivotData.lops.length} <span className="text-[10px] opacity-30">Entries</span></div>
+                    </div>
                   </div>
                 </div>
               )}
