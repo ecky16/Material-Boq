@@ -166,7 +166,7 @@ export default function App() {
     const saved = localStorage.getItem('lop_user');
     return saved ? JSON.parse(saved) : null;
   });
-  const [view, setView] = useState<'dashboard' | 'input' | 'users' | 'prices' | 'analytics'>('dashboard');
+  const [view, setView] = useState<'dashboard' | 'input' | 'users' | 'prices' | 'analytics' | 'lops_manage'>('dashboard');
   const [dashboardMode, setDashboardMode] = useState<'boq' | 'comparison'>('boq');
   const [lops, setLops] = useState<LOPWithItems[]>([]);
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
@@ -819,6 +819,15 @@ export default function App() {
                 >
                   Manage Prices
                 </button>
+                <button 
+                  onClick={() => setView('lops_manage')}
+                  className={cn(
+                    "px-6 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                    view === 'lops_manage' ? "bg-accent-grad text-[#002244] shadow-lg shadow-accent/20" : "text-white/50 hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  Manage LOPs
+                </button>
               </>
             )}
           </div>
@@ -1113,6 +1122,77 @@ export default function App() {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              </div>
+            </motion.div>
+          ) : view === 'lops_manage' ? (
+            <motion.div
+              key="lops_manage"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              className="space-y-8"
+            >
+              <div className="glass-card rounded-3xl border-white/10 overflow-hidden shadow-2xl p-8">
+                <div className="flex items-center justify-between mb-8">
+                  <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-accent flex items-center gap-2">
+                    <TableIcon size={16} /> Manage All LOPs
+                  </h2>
+                </div>
+                
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-white/5 border-b border-white/10">
+                        <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">Created At</th>
+                        <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">LOP Date</th>
+                        <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">LOP Name</th>
+                        <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">Type</th>
+                        <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">Inputer</th>
+                        <th className="text-center p-4 font-bold uppercase tracking-widest text-white/40">Items</th>
+                        <th className="text-right p-4 font-bold uppercase tracking-widest text-white/40">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="font-sans">
+                      {lops.map(lop => (
+                        <tr key={lop.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
+                          <td className="p-4 font-mono text-white/60">
+                            {new Date(lop.created_at).toLocaleString('id-ID')}
+                          </td>
+                          <td className="p-4 font-mono text-white/80">
+                            {new Date(lop.date).toLocaleDateString('id-ID')}
+                          </td>
+                          <td className="p-4 font-bold text-accent tracking-wide">{lop.name}</td>
+                          <td className="p-4">
+                            <span className={cn(
+                              "px-2 py-1 rounded text-[10px] uppercase tracking-wider font-bold",
+                              lop.type === 'warehouse' ? "bg-blue-500/20 text-blue-300 border border-blue-500/20" : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/20"
+                            )}>
+                              {lop.type}
+                            </span>
+                          </td>
+                          <td className="p-4 text-white/80">{lop.inputer_name}</td>
+                          <td className="p-4 text-center font-mono text-white/80">{lop.items.length}</td>
+                          <td className="p-4 text-right">
+                            <button 
+                              onClick={() => deleteLop(lop.id)}
+                              className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/50 hover:text-red-400 hover:bg-red-500/10 transition-all ml-auto opacity-50 group-hover:opacity-100"
+                              title="Delete LOP"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {lops.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="p-8 text-center text-white/40 font-sans">
+                            No LOP entries found in the database.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </motion.div>
