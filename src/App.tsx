@@ -467,6 +467,7 @@ export default function App() {
         .from('lops')
         .select('id')
         .eq('name', lopName)
+        .eq('type', inputType)
         .maybeSingle();
 
       if (existingLop) {
