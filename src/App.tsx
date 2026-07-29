@@ -170,6 +170,7 @@ export default function App() {
   });
   const [view, setView] = useState<'dashboard' | 'input' | 'users' | 'prices' | 'analytics' | 'lops_manage'>('dashboard');
   const [dashboardMode, setDashboardMode] = useState<'boq' | 'comparison'>('boq');
+  const [inputType, setInputType] = useState<'warehouse' | 'boq'>('warehouse');
   const [lops, setLops] = useState<LOPWithItems[]>([]);
   const [allUsers, setAllUsers] = useState<AppUser[]>([]);
   const [prices, setPrices] = useState<Record<string, number>>({});
