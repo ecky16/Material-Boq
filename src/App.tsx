@@ -30,10 +30,12 @@ import {
   Search,
   ArrowUpRight,
   TrendingUp,
-  Package
+  Package,
+  Edit
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
+import { EditLopModal } from './components/EditLopModal';
 import { 
   BarChart, 
   Bar, 
@@ -177,7 +179,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
 
   // Input Form State
-  const [inputType, setInputType] = useState<'warehouse' | 'boq'>('warehouse');
+  const [editingLop, setEditingLop] = useState<LOPWithItems | null>(null);
+  const [editingItems, setEditingItems] = useState<LOPItem[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
   const [lopName, setLopName] = useState('');
   const [lopDate, setLopDate] = useState(new Date().toISOString().slice(0, 10));
@@ -516,6 +519,28 @@ export default function App() {
         }
       }
     });
+  };
+
+  const handleSaveLopItems = async (lopId: string, updatedItems: LOPItem[]) => {
+    try {
+      const { error: deleteError } = await supabase.from('lop_items').delete().eq('lop_id', lopId);
+      if (deleteError) throw deleteError;
+      
+      const { error: insertError } = await supabase.from('lop_items').insert(
+        updatedItems.map(item => ({ 
+            id: item.id, 
+            lop_id: lopId, 
+            designator: item.designator, 
+            volume: item.volume 
+        }))
+      );
+      if (insertError) throw insertError;
+      
+      fetchLops();
+    } catch (err) {
+      console.error('Error updating LOP items:', err);
+    }
+    setEditingLop(null);
   };
 
   const deleteUser = async (id: string, username: string) => {
@@ -1138,27 +1163,30 @@ export default function App() {
                   <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-accent flex items-center gap-2">
                     <TableIcon size={16} /> Manage All LOPs
                   </h2>
+                  <Input 
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search LOP name..."
+                    className="w-64"
+                  />
                 </div>
                 
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs border-collapse">
                     <thead>
                       <tr className="bg-white/5 border-b border-white/10">
-                        <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">Created At</th>
                         <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">LOP Date</th>
                         <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">LOP Name</th>
                         <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">Type</th>
-                        <th className="text-left p-4 font-bold uppercase tracking-widest text-white/40">Inputer</th>
                         <th className="text-center p-4 font-bold uppercase tracking-widest text-white/40">Items</th>
                         <th className="text-right p-4 font-bold uppercase tracking-widest text-white/40">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="font-sans">
-                      {lops.map(lop => (
+                      {lops
+                        .filter(lop => lop.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                        .map(lop => (
                         <tr key={lop.id} className="border-b border-white/5 hover:bg-white/5 transition-colors group">
-                          <td className="p-4 font-mono text-white/60">
-                            {new Date(lop.created_at).toLocaleString('id-ID')}
-                          </td>
                           <td className="p-4 font-mono text-white/80">
                             {new Date(lop.date).toLocaleDateString('id-ID')}
                           </td>
@@ -1171,12 +1199,18 @@ export default function App() {
                               {lop.type}
                             </span>
                           </td>
-                          <td className="p-4 text-white/80">{lop.inputer_name}</td>
                           <td className="p-4 text-center font-mono text-white/80">{lop.items.length}</td>
-                          <td className="p-4 text-right">
+                          <td className="p-4 text-right flex items-center justify-end gap-2">
+                            <button 
+                              onClick={() => { setEditingLop(lop); setEditingItems(lop.items); }}
+                              className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/50 hover:text-accent hover:bg-accent/10 transition-all ml-auto opacity-50 group-hover:opacity-100"
+                              title="Edit LOP"
+                            >
+                              <Edit size={14} />
+                            </button>
                             <button 
                               onClick={() => deleteLop(lop.id)}
-                              className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/50 hover:text-red-400 hover:bg-red-500/10 transition-all ml-auto opacity-50 group-hover:opacity-100"
+                              className="w-8 h-8 rounded-lg bg-white/5 flex items-center justify-center text-white/50 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-50 group-hover:opacity-100"
                               title="Delete LOP"
                             >
                               <Trash2 size={14} />
@@ -1184,10 +1218,10 @@ export default function App() {
                           </td>
                         </tr>
                       ))}
-                      {lops.length === 0 && (
+                      {lops.filter(lop => lop.name.toLowerCase().includes(searchQuery.toLowerCase())).length === 0 && (
                         <tr>
-                          <td colSpan={7} className="p-8 text-center text-white/40 font-sans">
-                            No LOP entries found in the database.
+                          <td colSpan={5} className="p-8 text-center text-white/40 font-sans">
+                            No LOP entries found matching "{searchQuery}".
                           </td>
                         </tr>
                       )}
@@ -1607,6 +1641,29 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* LOP Breakdown */}
+              {pivotData.lops.length > 0 && (
+                <div className="glass-card p-8 rounded-3xl border-white/10 mt-8">
+                  <h2 className="text-sm font-bold uppercase tracking-[0.2em] text-accent mb-8">Breakdown per LOP</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {pivotData.lops.map(lop => {
+                      const totalVol = lop.items.reduce((sum, item) => sum + item.volume, 0);
+                      const totalPrice = lop.items.reduce((sum, item) => {
+                        const price = prices[item.designator] || 0;
+                        return sum + (item.volume * price);
+                      }, 0);
+                      return (
+                        <div key={lop.id} className="glass-card p-6 rounded-2xl border-white/5 bg-white/5 flex flex-col gap-2">
+                           <div className="font-bold text-accent truncate">{lop.name}</div>
+                           <div className="text-xs text-white/60">Total Vol: {totalVol.toLocaleString()} units</div>
+                           <div className="text-xs text-accent/80 font-mono">Total: {formatIDR(totalPrice)}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -1631,6 +1688,14 @@ export default function App() {
         message={modalConfig.message}
         variant={modalConfig.variant}
       />
+      {editingLop && (
+        <EditLopModal 
+          lop={editingLop}
+          items={editingItems}
+          onClose={() => setEditingLop(null)}
+          onSave={handleSaveLopItems}
+        />
+      )}
     </div>
   );
 }
