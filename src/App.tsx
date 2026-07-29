@@ -461,6 +461,19 @@ export default function App() {
 
     setIsSaving(true);
     try {
+      // Check if LOP already exists
+      const { data: existingLop } = await supabase
+        .from('lops')
+        .select('id')
+        .eq('name', lopName)
+        .maybeSingle();
+
+      if (existingLop) {
+        alert('An LOP with this name already exists.');
+        setIsSaving(false);
+        return;
+      }
+
       const { data: lopData, error: lopError } = await supabase
         .from('lops')
         .insert([{ 
