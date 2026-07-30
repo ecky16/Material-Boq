@@ -582,7 +582,7 @@ export default function App() {
   };
 
   const pivotData = useMemo(() => {
-    let filteredLops = lops.filter(lop => lop.date.startsWith(filterMonth));
+    let filteredLops = lops;
     
     if (currentUser?.role === 'admin') {
       if (filterInputer !== 'all') {
@@ -598,13 +598,24 @@ export default function App() {
       filteredLops = filteredLops.filter(l => l.type === 'boq');
     }
 
+    const q = searchQuery.toLowerCase().trim();
     let designators = Array.from(new Set(filteredLops.flatMap(lop => lop.items.map(i => i.designator)))).sort() as string[];
     
-    // Apply search filter
-    if (searchQuery) {
-      designators = designators.filter(d => 
-        (d as string).toLowerCase().includes(searchQuery.toLowerCase())
-      );
+    if (q) {
+      // Apply search filter and ignore month
+      const matchingLops = filteredLops.filter(lop => lop.name.toLowerCase().includes(q));
+      
+      if (matchingLops.length > 0) {
+        filteredLops = matchingLops;
+        designators = Array.from(new Set(filteredLops.flatMap(lop => lop.items.map(i => i.designator)))).sort() as string[];
+      } else {
+        designators = designators.filter(d => d.toLowerCase().includes(q));
+        filteredLops = filteredLops.filter(lop => lop.items.some(i => designators.includes(i.designator)));
+      }
+    } else {
+      // If NO search query, apply month filter
+      filteredLops = filteredLops.filter(lop => lop.date.startsWith(filterMonth));
+      designators = Array.from(new Set(filteredLops.flatMap(lop => lop.items.map(i => i.designator)))).sort() as string[];
     }
 
     const rows = designators.map(designator => {
@@ -1457,7 +1468,7 @@ export default function App() {
                   <div className="relative w-full md:w-80">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
                     <Input 
-                      placeholder="Search designator..." 
+                      placeholder="Search LOP name or designator..." 
                       className="pl-10"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
